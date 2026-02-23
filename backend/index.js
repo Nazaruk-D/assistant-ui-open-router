@@ -9,13 +9,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Загружаем .env.local из корня проекта
 const envPath = path.join(__dirname, '..', '.env.local');
 console.log('📁 Загружаем .env из:', envPath);
 
 dotenv.config({ path: envPath });
 
-// Проверяем наличие API ключа
 if (!process.env.OPENROUTER_API_KEY && !process.env.OPENAI_API_KEY) {
   console.error('❌ API ключ не найден! Укажите OPENROUTER_API_KEY в .env.local');
   process.exit(1);
@@ -24,24 +22,20 @@ if (!process.env.OPENROUTER_API_KEY && !process.env.OPENAI_API_KEY) {
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-// CORS настройки
 app.use(cors({
   origin: ['http://localhost:3000', 'http://localhost:3001'],
   credentials: true
 }));
 app.use(express.json());
 
-// Инициализация OpenRouter клиента
 const client = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
   baseURL: 'https://openrouter.ai/api/v1'
 });
 
-// Инициализация БД
 const db = new ChatDB();
 const MAX_HISTORY = parseInt(process.env.MAX_HISTORY) || 20;
 
-// Health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -50,48 +44,78 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Основной streaming endpoint
 app.post('/api/chat/stream', async (req, res) => {
   try {
     const { messages, sessionId = 'default' } = req.body;
     
     console.log(`\n📝 [${sessionId}] Новый запрос`);
-    
-    // Настройки SSE
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Отключаем буферизацию для nginx
-    
-    // Проверяем входные данные
+
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       throw new Error('Неверный формат сообщений');
     }
     
-    const lastMessage = messages[messages.length - 1];
+    console.log('\n📦 RAW данные с фронтенда:');
+    console.log(JSON.stringify(messages, null, 2));
     
-    // Сохраняем сообщение пользователя (если оно не пустое)
+    // Преобразовывем формат assistant-ui
+    const convertedMessages = messages.map(msg => {
+      if (msg.parts && Array.isArray(msg.parts)) {
+        const textPart = msg.parts.find(p => p.type === 'text');
+        return {
+          role: msg.role || 'user',
+          content: textPart?.text || ''
+        };
+      }
+      if (msg.content) {
+        return {
+          role: msg.role || 'user',
+          content: msg.content
+        };
+      }
+      return {
+        role: msg.role || 'user',
+        content: ''
+      };
+    });
+    
+    const lastMessage = convertedMessages[convertedMessages.length - 1];
+    
     if (lastMessage?.content && lastMessage.content.trim() !== '') {
       await db.addMessage(`web_${sessionId}`, 'user', lastMessage.content);
       console.log(`💬 Сообщение пользователя сохранено: "${lastMessage.content.substring(0, 50)}..."`);
+    } else {
+      console.log('⚠️ Сообщение пользователя пустое или отсутствует');
     }
+    convertedMessages.forEach((msg, index) => {
+      const content = msg?.content || 'НЕТ ТЕКСТА';
+      const role = msg?.role || 'unknown';
+      console.log(`[${index}] ${role}: ${content.substring(0, 50)}${content.length > 50 ? '...' : ''}`);
+    });
     
-    // Получаем историю чата
     const history = await db.getHistory(`web_${sessionId}`, MAX_HISTORY);
-    console.log(`📚 История загружена, сообщений: ${history.length}`);
-    
-    // Формируем сообщения для модели
+    console.log(`\n📚 История из БД, сообщений: ${history.length}`);
+    history.forEach((msg, index) => {
+      const content = msg?.content || 'НЕТ ТЕКСТА';
+      console.log(`[history ${index}] ${msg.role}: ${content.substring(0, 50)}${content.length > 50 ? '...' : ''}`);
+    });
+
     const modelMessages = [
       { role: 'system', content: 'Ты полезный ассистент. Отвечай на русском языке.' },
       ...history.map(msg => ({
         role: msg.role,
-        content: msg.content
+        content: msg.content || ''
       }))
     ];
+
+    // Настройки SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
     
-    console.log('🤖 Отправляем запрос в OpenRouter...');
+    console.log('\n🤖 Отправляем запрос в OpenRouter...');
+    console.log('📤 modelMessages:', modelMessages.length, 'сообщений');
     
-    // Запрашиваем стриминг у OpenRouter
     const stream = await client.chat.completions.create({
       model: "openrouter/free",
       messages: modelMessages,
@@ -103,7 +127,6 @@ app.post('/api/chat/stream', async (req, res) => {
     let fullResponse = '';
     let messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     
-    // Отправляем начало сообщения
     const startEvent = {
       type: 'text-start',
       id: messageId
@@ -111,26 +134,20 @@ app.post('/api/chat/stream', async (req, res) => {
     res.write(`data: ${JSON.stringify(startEvent)}\n\n`);
     console.log('📤 Отправлено: text-start');
     
-    // Обрабатываем стрим от OpenRouter
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || '';
       if (content) {
         fullResponse += content;
         
-        // Отправляем чанк текста
         const deltaEvent = {
           type: 'text-delta',
           id: messageId,
-          delta: content  // ВАЖНО: используем textDelta, а не delta
+          delta: content
         };
         res.write(`data: ${JSON.stringify(deltaEvent)}\n\n`);
-        
-        // Логируем каждый чанк (можно закомментировать в продакшне)
-        console.log(`📤 Чанк: "${content}"`);
       }
     }
     
-    // Отправляем конец сообщения
     const endEvent = {
       type: 'text-end',
       id: messageId
@@ -138,7 +155,6 @@ app.post('/api/chat/stream', async (req, res) => {
     res.write(`data: ${JSON.stringify(endEvent)}\n\n`);
     console.log('📤 Отправлено: text-end');
     
-    // Сохраняем полный ответ в БД
     if (fullResponse && fullResponse.trim() !== '') {
       await db.addMessage(`web_${sessionId}`, 'assistant', fullResponse);
       console.log(`💾 Ответ сохранен в БД, длина: ${fullResponse.length} символов`);
@@ -150,7 +166,6 @@ app.post('/api/chat/stream', async (req, res) => {
   } catch (error) {
     console.error('❌ Streaming Error:', error);
     
-    // Отправляем ошибку в правильном формате
     const errorEvent = {
       type: 'error',
       errorText: error.message || 'Internal server error'
@@ -160,7 +175,6 @@ app.post('/api/chat/stream', async (req, res) => {
   }
 });
 
-// Тестовый endpoint для проверки формата
 app.get('/api/test-stream', (req, res) => {
   console.log('🧪 Тестовый стрим запрошен');
   
@@ -170,7 +184,6 @@ app.get('/api/test-stream', (req, res) => {
   
   const messageId = `test_${Date.now()}`;
   
-  // Отправляем тестовые события
   const sendEvent = (type, data = {}) => {
     const event = { type, id: messageId, ...data };
     res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -205,7 +218,6 @@ app.get('/api/test-stream', (req, res) => {
   }, 600);
 });
 
-// Запуск сервера
 app.listen(PORT, () => {
   console.log('\n' + '='.repeat(50));
   console.log('🚀 Backend запущен:');

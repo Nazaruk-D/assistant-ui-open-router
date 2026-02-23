@@ -25,10 +25,9 @@ class ChatDB {
 
   addMessage(chatId, role, content) {
     return new Promise((resolve, reject) => {
-      // Проверяем, что content не пустой
       if (!content || content.trim() === '') {
         console.warn('⚠️ Попытка сохранить пустое сообщение');
-        return resolve(null); // Просто пропускаем
+        return resolve(null);
       }
 
       this.db.run(

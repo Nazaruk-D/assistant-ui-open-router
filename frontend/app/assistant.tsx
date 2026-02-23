@@ -1,7 +1,7 @@
 "use client";
 
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
+import { useChatRuntime, AssistantChatTransport } from "@assistant-ui/react-ai-sdk";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -30,15 +30,34 @@ export const Assistant = () => {
     return newId;
   }, []);
 
+  const transport = useMemo(() => {
+    return new AssistantChatTransport({
+      api: "/api/chat",
+      fetch: async (input, init) => {
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        const modifiedBody = JSON.stringify({
+          ...body,
+          sessionId: sessionId
+        });
+
+        return fetch(input, {
+          ...init,
+          body: modifiedBody,
+          headers: {
+            ...init?.headers,
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+    });
+  }, [sessionId]);
+
   const runtime = useChatRuntime({
+    transport,
     onError: (error) => {
       console.error('Chat error:', error);
     },
-    onFinish: (message) => {
-      console.log('Message finished:', message);
-    },
   });
-
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <SidebarProvider>

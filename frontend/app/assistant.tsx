@@ -1,11 +1,7 @@
 "use client";
 
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import {
-  useChatRuntime,
-  AssistantChatTransport,
-} from "@assistant-ui/react-ai-sdk";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -22,13 +18,25 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { useMemo } from "react";
 
 export const Assistant = () => {
+  const sessionId = useMemo(() => {
+    if (typeof window === 'undefined') return 'default';
+    const saved = localStorage.getItem('chatSessionId');
+    if (saved) return saved;
+    const newId = `web_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    localStorage.setItem('chatSessionId', newId);
+    return newId;
+  }, []);
+
   const runtime = useChatRuntime({
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    transport: new AssistantChatTransport({
-      api: "/api/chat",
-    }),
+    onError: (error) => {
+      console.error('Chat error:', error);
+    },
+    onFinish: (message) => {
+      console.log('Message finished:', message);
+    },
   });
 
   return (
@@ -43,17 +51,13 @@ export const Assistant = () => {
               <Breadcrumb>
                 <BreadcrumbList>
                   <BreadcrumbItem className="hidden md:block">
-                    <BreadcrumbLink
-                      href="https://www.assistant-ui.com/docs/getting-started"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Build Your Own ChatGPT UX
+                    <BreadcrumbLink href="#">
+                      AI Chat
                     </BreadcrumbLink>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator className="hidden md:block" />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Starter Template</BreadcrumbPage>
+                    <BreadcrumbPage>Web Assistant</BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>

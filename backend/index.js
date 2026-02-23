@@ -14,8 +14,8 @@ console.log('📁 Загружаем .env из:', envPath);
 
 dotenv.config({ path: envPath });
 
-if (!process.env.OPENROUTER_API_KEY && !process.env.OPENAI_API_KEY) {
-  console.error('❌ API ключ не найден! Укажите OPENROUTER_API_KEY в .env.local');
+if (!process.env.OPENAI_API_KEY) {
+  console.error('❌ API ключ не найден! Укажите OPENAI_API_KEY в .env.local');
   process.exit(1);
 }
 
@@ -29,7 +29,7 @@ app.use(cors({
 app.use(express.json());
 
 const client = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY,
   baseURL: 'https://openrouter.ai/api/v1'
 });
 
@@ -39,7 +39,7 @@ const MAX_HISTORY = parseInt(process.env.MAX_HISTORY) || 20;
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    apiKey: process.env.OPENROUTER_API_KEY ? '✅' : '❌',
+    apiKey: process.env.OPENAI_API_KEY ? '✅' : '❌',
     timestamp: new Date().toISOString() 
   });
 });
